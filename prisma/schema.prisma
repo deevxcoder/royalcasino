@@ -8,67 +8,158 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
-model User {
-  id           String        @id @default(cuid())
-  username     String        @unique
-  email        String?       @unique
-  passwordHash String
-  balance      Float         @default(1000.0)
-  currency     String        @default("INR")
-  isAdmin      Boolean       @default(false)
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  transactions Transaction[]
-  rounds       GameRound[]
+model Operator {
+  id               String                @id @default(cuid())
+  companyName      String
+  email            String                @unique
+  passwordHash     String
+  balance          Float                 @default(10000.0) // Starting demo prepaid GGR credit
+  currency         String                @default("INR")
+  ggrRate          Float                 @default(10.0)   // 10% Revenue share
+  isAdmin          Boolean               @default(false)  // Master Provider Admin
+  status           String                @default("ACTIVE") // ACTIVE, SUSPENDED
+  callbackUrl      String?               @default("https://ggrcasinotest.vercel.app/api/callback")
+  encryptCallbacks Boolean               @default(false)
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+  tokens           ApiToken[]
+  sessions         GameSession[]
+  rounds           GameRound[]
+  transactions OperatorTransaction[]
+  webhookLogs  WebhookLog[]
 
-  @@map("users")
+  @@map("operators")
 }
 
-model Transaction {
+model ApiToken {
+  id          String   @id @default(cuid())
+  operatorId  String
+  operator    Operator @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+  token       String   @unique // Public API token e.g. "roy_live_..."
+  secretKey   String   // Private 256-bit encryption key
+  name        String   @default("Production Key")
+  isLive      Boolean  @default(true)
+  ipWhitelist String?  // Comma-separated allowed IPs. Null = open/any
+  createdAt   DateTime @default(now())
+
+  @@index([operatorId])
+  @@map("api_tokens")
+}
+
+model GameSession {
+  id          String       @id @default(cuid())
+  sessionId   String       @unique // Unique secure session UUID
+  operatorId  String
+  operator    Operator     @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+  userId      String       // Client player ID
+  gameUid     String       // royal_coinflip, royal_andarbahar, royal_chickencross, royal_aviator, royal_mines, royal_roulette, or external UID
+  balance     Float        // Initial balance
+  currency    String       @default("INR")
+  callbackUrl String       // Client settlement endpoint
+  returnUrl   String       // Exit game URL
+  status      String       @default("ACTIVE") // ACTIVE, CLOSED
+  createdAt   DateTime     @default(now())
+  expiresAt   DateTime
+  rounds      GameRound[]
+  webhookLogs WebhookLog[]
+
+  @@index([operatorId])
+  @@map("game_sessions")
+}
+
+model GameRound {
+  id             String       @id @default(cuid())
+  serialNumber   String       @unique // Idempotency key
+  sessionId      String?
+  session        GameSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  operatorId     String
+  operator       Operator     @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+  userId         String
+  gameUid        String
+  gameName       String
+  gameRound      String?
+  betAmount      Float
+  winAmount      Float
+  creditAmount   Float        // Authoritative new player balance
+  ggrFeeDeducted Float        @default(0.0) // GGR fee charged to operator
+  rawPayload     String?
+  createdAt      DateTime     @default(now())
+
+  @@index([operatorId])
+  @@map("game_rounds")
+}
+
+model WebhookLog {
+  id           String       @id @default(cuid())
+  operatorId   String
+  operator     Operator     @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+  sessionId    String?
+  session      GameSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  serialNumber String
+  targetUrl    String
+  payload      String
+  responseCode Int?
+  responseBody String?
+  status       String       @default("SUCCESS") // SUCCESS, FAILED, RETRYING
+  attempts     Int          @default(1)
+  createdAt    DateTime     @default(now())
+
+  @@index([operatorId])
+  @@map("webhook_logs")
+}
+
+model OperatorTransaction {
   id           String   @id @default(cuid())
-  userId       String
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type         String   // DEPOSIT, WITHDRAWAL, BET, WIN
+  operatorId   String
+  operator     Operator @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+  type         String   // DEPOSIT, GGR_FEE, ADJUSTMENT
   amount       Float
   balanceAfter Float
   referenceId  String?
   description  String?
   createdAt    DateTime @default(now())
 
-  @@index([userId])
-  @@map("transactions")
+  @@index([operatorId])
+  @@map("operator_transactions")
 }
 
-model GameRound {
-  id            String   @id @default(cuid())
-  serialNumber  String   @unique // Idempotency key from NexxAPI callback
+model ExternalProvider {
+  id          String         @id @default(cuid())
+  brandId     Int            @unique
+  name        String
+  type        String         @default("NEXX_AGGREGATOR") // ROYAL_NATIVE, NEXX_AGGREGATOR, DIRECT_RGS, CUSTOM_HTTP
+  apiUrl      String?        @default("https://api.nexxapi.tech/api/v1")
+  apiToken    String?
+  apiSecret   String?
+  logo        String?
+  isActive    Boolean        @default(true)
+  gameCount   Int            @default(0)
+  ggrMargin   Float          @default(10.0)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  games       ExternalGame[]
+
+  @@map("external_providers")
+}
+
+model ExternalGame {
+  id            String           @id @default(cuid())
+  providerId    String
+  provider      ExternalProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
   gameId        Int?
-  gameUid       String
-  gameRound     String?
-  memberAccount String   // userId
-  user          User     @relation(fields: [memberAccount], references: [id], onDelete: Cascade)
-  betAmount     Float    @default(0)
-  winAmount     Float    @default(0)
-  creditAmount  Float    // Authoritative balance after round
-  gameName      String?
-  rawPayload    String?
-  createdAt     DateTime @default(now())
+  gameUid       String           @unique
+  name          String
+  category      String           @default("slots") // slots, live, crash, table, originals
+  rtp           Float            @default(96.5)
+  volatility    String           @default("MEDIUM") // LOW, MEDIUM, HIGH, VERY_HIGH
+  maxMultiplier String           @default("5000x")
+  thumbnail     String?
+  banner        String?
+  isActive      Boolean          @default(true)
+  isFeatured    Boolean          @default(false)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
 
-  @@index([memberAccount])
-  @@map("game_rounds")
-}
-
-model SiteSetting {
-  id           String   @id @default("default")
-  siteName     String   @default("NEXX CASINO")
-  siteSubtitle String   @default("Casino Royale")
-  logoUrl      String?
-  themeColor   String   @default("gold") // gold, emerald, ruby, purple, blue
-  callbackUrl  String   @default("https://your-domain.com/api/callback")
-  returnUrl    String   @default("https://your-domain.com/lobby")
-  currency         String   @default("INR")
-  enabledProviders String?  // JSON array of enabled brand_ids, e.g. "[57,45,49]". Null = all providers visible.
-  updatedAt        DateTime @updatedAt
-
-  @@map("site_settings")
+  @@index([providerId])
+  @@map("external_games")
 }
