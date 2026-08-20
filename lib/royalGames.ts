@@ -1,10 +1,10 @@
 import { Provider, Game } from "./types";
 
-export const ROYAL_GAMES_BRAND_ID = 88888;
+export const ROYAL_GAMES_BRAND_ID = 1;
 
 export const ROYAL_GAMES_PROVIDER: Provider = {
   brand_id: ROYAL_GAMES_BRAND_ID,
-  name: "Royal Games",
+  name: "Royal Games Studio",
   logo: null,
   game_count: 6,
 };
